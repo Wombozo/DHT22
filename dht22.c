@@ -51,32 +51,24 @@ struct timeval now;
 static int count = 0;
 static int time1, time2;
 
-//DECLARE_COMPLETION(cpl);
+DECLARE_COMPLETION(cpl);
+
+static void dht22_bhalf(unsigned long ctx);
+DECLARE_TASKLET(dht22_tasklet, dht22_bhalf, 0);
 
 /**
  * Bottom half function (multi-threaded)
 */
-static int dht22_bhalf(void *ctx){
+static void dht22_bhalf(unsigned long ctx){
 	switch (count){
-		case 0:
-			break;
-		case 1:
-			break;
-		case 2:
-			break;
-		case 3:
-			break;
-		case 4:
+		case 5:
 			do_gettimeofday(&now);
 			time1=now.tv_usec;
 			break;
-		case 5:
+		case 6:
 			do_gettimeofday(&now);
 			time2=now.tv_usec;
-			break;
-		case 6:
-			break;
-		case 7:
+			printk(KERN_INFO "time : %d us\n", time2-time1);
 			break;
 		default:
 			break;
@@ -88,6 +80,8 @@ static int dht22_bhalf(void *ctx){
  * IRQ Handler 
 */
 static irq_handler_t dht22_irq_handler(unsigned int irq, void *dev_id, struct pt_regs *regs){
+	count++;
+	tasklet_schedule(&dht22_tasklet);
 	return (irq_handler_t) IRQ_HANDLED;
 }
 
@@ -95,7 +89,7 @@ static irq_handler_t dht22_irq_handler(unsigned int irq, void *dev_id, struct pt
  * Called on cat /sys/kernel/dht22_kobject/{temp,hum}
 */
 static ssize_t b_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf){
-	gpio_set_value(gpio,1);
+	gpio_direction_output(gpio,1);
 	//int var;
 	count=0;
 	gpio_set_value(gpio,0);
@@ -175,6 +169,8 @@ static int __init dht22_init(void){
 	gpio_export(gpio,true);
 	gpio_direction_output(gpio,1);
 
+	init_completion(&cpl);
+
 	err = request_irq(gpio_to_irq(gpio),
 			(irq_handler_t) dht22_irq_handler,
 			IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING,
@@ -192,6 +188,7 @@ static void __exit dht22_exit(void){
 	gpio_unexport(gpio);
 	gpio_free(gpio);
 	kobject_put(dht22_kobject);
+	tasklet_kill(&dht22_tasklet);
 	free_irq(gpio_to_irq(gpio),NULL);
 	printk(KERN_INFO "Removing DHT22 module\n");
 }
