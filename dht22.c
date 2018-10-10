@@ -45,11 +45,13 @@ static struct kobject *dht22_kobject;
 
 static struct task_struct *task;
 
-
 struct timeval now;
 
 static int count = 0;
 static int time1, time2;
+
+static char bit_buf[32];
+static int index=0;
 
 DECLARE_COMPLETION(cpl);
 
@@ -60,20 +62,23 @@ DECLARE_TASKLET(dht22_tasklet, dht22_bhalf, 0);
  * Bottom half function (multi-threaded)
 */
 static void dht22_bhalf(unsigned long ctx){
-	switch (count){
-		case 5:
-			do_gettimeofday(&now);
-			time1=now.tv_usec;
-			break;
-		case 6:
-			do_gettimeofday(&now);
-			time2=now.tv_usec;
-			printk(KERN_INFO "time : %d us\n", time2-time1);
-			break;
-		default:
-			break;
+	if (count < 5);
+	else if(count>=71)
+	;//	complete(&cpl);
+	else if(count%2==1){
+		do_gettimeofday(&now);
+		time1=now.tv_usec;	
 	}
-	return 0;
+	else{
+		do_gettimeofday(&now);
+		time2=now.tv_usec;
+		if (time2-time1 > 50)
+			bit_buf[index]=1;
+		else
+			bit_buf[index]=0;
+		index++;
+	}
+	
 }
 
 /**
@@ -96,6 +101,9 @@ static ssize_t b_show(struct kobject *kobj, struct kobj_attribute *attr, char *b
 	udelay(Tbe);
 	gpio_set_value(gpio,1);
 	gpio_direction_input(gpio);
+
+	wait_for_completion(&cpl);
+	printk(KERN_INFO "Buffer :%s , index :%d\n",bit_buf,index);
 
 /*
 	if (strcmp(attr->attr.name, "temp") == 0){
