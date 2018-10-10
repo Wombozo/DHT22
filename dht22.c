@@ -43,9 +43,9 @@ static int Tbe = 1000;
 
 static struct kobject *dht22_kobject;
 
-static struct task_struct *task;
-
 struct timeval now;
+
+struct tasklet_struct dht22_tasklet;
 
 static int count = 0;
 static int time1, time2;
@@ -56,22 +56,19 @@ static int index=0;
 DECLARE_COMPLETION(cpl);
 
 static void dht22_bhalf(unsigned long ctx);
-DECLARE_TASKLET(dht22_tasklet, dht22_bhalf, 0);
 
 /**
  * Bottom half function (multi-threaded)
 */
-static void dht22_bhalf(unsigned long ctx){
+static void dht22_bhalf(unsigned long time){
 	if (count < 5);
-	else if(count>=71)
-	;//	complete(&cpl);
+	else if(count>=10)
+		complete(&cpl);
 	else if(count%2==1){
-		do_gettimeofday(&now);
-		time1=now.tv_usec;	
+		time1=time;
 	}
 	else{
-		do_gettimeofday(&now);
-		time2=now.tv_usec;
+		time2=time;
 		if (time2-time1 > 50)
 			bit_buf[index]=1;
 		else
@@ -86,6 +83,8 @@ static void dht22_bhalf(unsigned long ctx){
 */
 static irq_handler_t dht22_irq_handler(unsigned int irq, void *dev_id, struct pt_regs *regs){
 	count++;
+	do_gettimeofday(&now);
+	tasklet_init(&dht22_tasklet, dht22_bhalf,(unsigned long)(now.tv_usec));
 	tasklet_schedule(&dht22_tasklet);
 	return (irq_handler_t) IRQ_HANDLED;
 }
@@ -103,7 +102,7 @@ static ssize_t b_show(struct kobject *kobj, struct kobj_attribute *attr, char *b
 	gpio_direction_input(gpio);
 
 	wait_for_completion(&cpl);
-	printk(KERN_INFO "Buffer :%s , index :%d\n",bit_buf,index);
+	printk(KERN_INFO "Buffer :%s , index :%d , count :%d\n",bit_buf,index,count);
 
 /*
 	if (strcmp(attr->attr.name, "temp") == 0){
