@@ -19,7 +19,7 @@
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
 
-#define GPIO 15 // (1-1) * 32 + 15
+#define GPIO 13 // (1-1) * 32 + 15
 
 typedef struct{
 	unsigned int chksum : 8;
@@ -37,7 +37,7 @@ static struct kobject *dht22_kobject;
 struct timeval now;
 static uint32_t count = 0;
 static int time1, time2;
-static uint64_t raw_data=0;
+static uint64_t raw_data;
 
 DECLARE_COMPLETION(cpl);
 
@@ -47,28 +47,29 @@ DECLARE_COMPLETION(cpl);
 static irq_handler_t dht22_irq_handler(unsigned int irq, void *dev_id, struct pt_regs *regs){
 	count++;
 	do_gettimeofday(&now);
-	if (count < 2);
 	// End of Frame
-	if (count>=42){
+	// Data
+	if ((count >2) && (count <42)){
+		time2=now.tv_usec;
+		if (time2-time1 > 100)
+			raw_data = (raw_data << 1) | 1;
+		else
+			raw_data = (raw_data << 1) | 0;
+		time1=time2;
+	}
+	// Start of frame
+	else if(count==2)
+		time1=now.tv_usec;
+	else if (count>=42){
 		time2=now.tv_usec;
 		if (time2-time1 > 100)
 			raw_data = (raw_data << 1) | 1;
 		else
 			raw_data = (raw_data << 1) | 0;
 		complete(&cpl);
+		printk(KERN_INFO "count : %d\n", count);
 	}
-	// Start of frame
-	else if(count==2)
-		time1=now.tv_usec;
-	// Data
-	else{
-		time2=now.tv_usec;
-		if (time2-time1 > 100)
-			raw_data= raw_data << 1 | 1;
-		else
-			raw_data= raw_data << 1 | 0;
-		time1=time2;
-	}
+	else if (count < 2);
 	return (irq_handler_t) IRQ_HANDLED;
 }
 
@@ -76,10 +77,9 @@ static irq_handler_t dht22_irq_handler(unsigned int irq, void *dev_id, struct pt
  * @brief Data processing
 */
 static int data_management(void){
-	
 	val = (values*) &raw_data;
-	val->hum /=10;
-	val->temp /=10;
+	val->hum /= 10;
+	val->temp /= 10;
 	chksum = (raw_data & 0xff) + (raw_data & 0xff00) + (raw_data & 0xff0000) + (raw_data & 0xff000000);
 	return (chksum != val->chksum);
 }
@@ -89,17 +89,21 @@ static int data_management(void){
 */
 static int dht22_initialize(void){
 	int err;
+	val=NULL;
+	raw_data=0;
 	count=0;
+	init_completion(&cpl);
 	gpio_direction_output(GPIO,1);
 	gpio_set_value(GPIO,0);
 	udelay(Tbe);
-	enable_irq(irq);
 	gpio_set_value(GPIO,1);
 	gpio_direction_input(GPIO);
 
 	wait_for_completion(&cpl);
-	disable_irq(irq);
 	gpio_direction_output(GPIO,0);
+	if (count != 42){
+		return 5;
+	}
 	err = data_management();
 	return err;
 }
@@ -108,25 +112,15 @@ static int dht22_initialize(void){
  * @brief Called on cat /sys/kernel/dht22_kobject/{temp,hum}
 */
 static ssize_t b_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf){
-	while (dht22_initialize());
-	
-	if (strcmp(attr->attr.name, "temp") == 0){
+	while(dht22_initialize());
+	if (strcmp(attr->attr.name, "temp") == 0)
 		var = val->temp;
-	}
 
-	else if(strcmp(attr->attr.name, "hum") == 0){
+	else if(strcmp(attr->attr.name, "hum") == 0)
 		var = val->hum;
-	}
 
-	else{
-		printk(KERN_WARNING "Invalid attr");
-		gpio_set_value(GPIO,1);
-		gpio_unexport(GPIO);
-		gpio_free(GPIO);
-		kobject_put(dht22_kobject);
-		return -EINVAL;
-	}
-	reinit_completion(&cpl);
+//	printk(KERN_INFO "TEMP : %04x, HUM : %04x, RAW_DATA : %010llx, COUNT : %d\n",
+//			val->temp, val->hum, raw_data, count);
 	return sprintf(buf, "%d\n", var);
 }
 
@@ -148,8 +142,6 @@ static struct attribute *attrs[] = {
 static struct attribute_group attr_group = {
 	.attrs = attrs,
 };
-
-
 
 /**
  * @brief Initialize LKM
@@ -179,7 +171,6 @@ static int __init dht22_init(void){
 	gpio_export(GPIO,true);
 	gpio_direction_output(GPIO,1);
 
-	init_completion(&cpl);
 	irq = gpio_to_irq(GPIO);
 	
 	err = request_irq(irq,
@@ -187,7 +178,6 @@ static int __init dht22_init(void){
 			IRQF_TRIGGER_FALLING,
 			"dht22_gpio_handler",
 			NULL);
-	disable_irq(irq);
 	return err;
 }
 
